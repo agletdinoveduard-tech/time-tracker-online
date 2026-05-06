@@ -4,18 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Учёт времени сотрудников</title>
-    <!-- Иконка для рабочего стола iPhone -->
+    
+    <!-- Иконка для рабочего стола iPhone (быстрый вариант) -->
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2334c759'/%3E%3Ctext x='50' y='67' font-size='50' text-anchor='middle' fill='white' font-weight='bold'%3E📊%3C/text%3E%3C/svg%3E">
     
     <!-- Название приложения -->
-    <meta name="apple-mobile-web-app-title" content="Учёт">
-    <meta name="application-name" content="Учёт">
+    <meta name="apple-mobile-web-app-title" content="Учёт времени">
+    <meta name="application-name" content="Учёт времени">
     
     <!-- Цвет фона и режим приложения -->
     <meta name="theme-color" content="#34c759">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
+    
     <style>
         * {
             box-sizing: border-box;
@@ -59,8 +61,6 @@
         .btn-delete { background: #ff3b30; }
         .btn-edit { background: #ff9500; }
         .calc-button { background: #34c759; }
-        .export-button { background: #34c759; }
-        .import-button { background: #007aff; }
         .settings-button { background: #5856d6; }
         .sync-button { background: #34c759; }
         .result-block {
@@ -97,7 +97,6 @@
             max-width: 350px;
         }
         .modal-buttons { display: flex; gap: 8px; margin-top: 16px; }
-        .modal-buttons button { margin-bottom: 0; }
         .filter-row { display: flex; gap: 8px; margin-bottom: 16px; }
         .filter-row select, .filter-row input, .filter-row button { flex: 1; margin-bottom: 0; }
         .list-filters {
@@ -122,7 +121,6 @@
             display: none;
         }
         .autocomplete-suggestions div { padding: 12px; cursor: pointer; border-bottom: 1px solid #eee; }
-        .autocomplete-suggestions div:hover { background: #f0f0f0; }
         .expand-header {
             display: flex;
             justify-content: space-between;
@@ -135,7 +133,6 @@
         .warning { color: #ff3b30; font-size: 12px; margin-top: -12px; margin-bottom: 12px; display: none; }
         .sort-row { display: flex; justify-content: flex-end; margin-bottom: 12px; }
         .sort-select { width: auto; padding: 8px 12px; font-size: 14px; margin-bottom: 0; }
-        .import-file { display: none; }
         .current-rates {
             font-size: 12px;
             color: #666;
@@ -155,6 +152,7 @@
         .sync-status.success { background: #d4edda; color: #155724; }
         .sync-status.error { background: #f8d7da; color: #721c24; }
         .sync-status.syncing { background: #fff3cd; color: #856404; }
+        .syncing { opacity: 0.5; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -288,14 +286,37 @@
     let isExpanded = true;
     let syncInProgress = false;
     
-    // Тарифы для НОВЫХ записей
-    let rates = {
-        rate11: 372.7,
-        rateLess: 400
-    };
-    
+    let rates = { rate11: 372.7, rateLess: 400 };
     let currentFilter = { startDate: '', endDate: '', employee: '' };
     let listFilter = { year: '', month: '', employee: '', sortOrder: 'desc' };
+
+    // ============================================================
+    // ФУНКЦИИ ДЛЯ РАБОТЫ С ДАТАМИ
+    // ============================================================
+    
+    function normalizeDate(dateValue) {
+        if (!dateValue) return '';
+        if (typeof dateValue === 'string' && dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) return dateValue;
+        if (typeof dateValue === 'string' && dateValue.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+            const parts = dateValue.split('.');
+            return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+        const d = new Date(dateValue);
+        if (!isNaN(d.getTime())) {
+            const year = d.getUTCFullYear();
+            const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+        return dateValue;
+    }
+    
+    function formatDateForDisplay(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
+        return dateStr;
+    }
 
     // ============================================================
     // ФУНКЦИИ ДЛЯ РАБОТЫ С ТАРИФАМИ
@@ -325,13 +346,7 @@
         }
     }
     
-    function calculatePaymentForNewRecord(hours) {
-        if (hours === 11) return hours * rates.rate11;
-        if (hours < 11) return hours * rates.rateLess;
-        return hours * rates.rateLess;
-    }
-    
-    function calculatePaymentForEdit(hours) {
+    function calculatePayment(hours) {
         if (hours === 11) return hours * rates.rate11;
         if (hours < 11) return hours * rates.rateLess;
         return hours * rates.rateLess;
@@ -350,16 +365,10 @@
     function saveSettings() {
         const newRate11 = parseFloat(document.getElementById('rate11').value);
         const newRateLess = parseFloat(document.getElementById('rateLess').value);
-        
-        if (isNaN(newRate11) || newRate11 <= 0) {
-            alert('Введите корректную ставку для 11 часов');
+        if (isNaN(newRate11) || newRate11 <= 0 || isNaN(newRateLess) || newRateLess <= 0) {
+            alert('Введите корректные ставки');
             return;
         }
-        if (isNaN(newRateLess) || newRateLess <= 0) {
-            alert('Введите корректную ставку для часов менее 11');
-            return;
-        }
-        
         rates.rate11 = newRate11;
         rates.rateLess = newRateLess;
         saveRates();
@@ -368,47 +377,21 @@
     }
 
     // ============================================================
-    // ФУНКЦИИ ДЛЯ РАБОТЫ С ДАТАМИ
+    // ОСНОВНЫЕ ФУНКЦИИ
     // ============================================================
     
-    function normalizeDate(dateValue) {
-        if (!dateValue) return '';
-        if (typeof dateValue === 'string' && dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) return dateValue;
-        if (typeof dateValue === 'string' && dateValue.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
-            const parts = dateValue.split('.');
-            return `${parts[2]}-${parts[1]}-${parts[0]}`;
-        }
-        const d = new Date(dateValue);
-        if (!isNaN(d.getTime())) {
-            const year = d.getUTCFullYear();
-            const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-            const day = String(d.getUTCDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        }
-        return String(dateValue);
-    }
-    
-    function formatDateForDisplay(dateStr) {
-        if (!dateStr) return '';
-        const parts = dateStr.split('-');
-        if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
-        return dateStr;
-    }
-
     const generateId = () => Date.now();
     const saveData = () => localStorage.setItem('workRecords', JSON.stringify(records));
     const loadData = () => { 
         const saved = localStorage.getItem('workRecords'); 
         records = saved ? JSON.parse(saved) : []; 
+        records = records.map(r => ({ ...r, date: normalizeDate(r.date) }));
         saveData(); 
     };
     const uniqueEmployees = () => [...new Set(records.map(r => r.employee))].sort();
     const uniqueYears = () => [...new Set(records.map(r => r.date.split('-')[0]))].filter(y => y).sort((a,b)=>b-a);
     const isDuplicate = (date, emp, excludeId) => records.some(r => r.date === date && r.employee === emp && r.id !== excludeId);
 
-    // ============================================================
-    // ФИЛЬТРАЦИЯ
-    // ============================================================
     function filterForReport() {
         let f = [...records];
         if (currentFilter.startDate) f = f.filter(r => r.date >= currentFilter.startDate);
@@ -425,9 +408,6 @@
         return f;
     }
 
-    // ============================================================
-    // ОТОБРАЖЕНИЕ
-    // ============================================================
     function renderReport() {
         const f = filterForReport();
         let h=0, p=0;
@@ -448,16 +428,13 @@
             row.insertCell(3).innerText = rec.payment.toLocaleString('ru-RU',{minimumFractionDigits:2}) + ' ₽';
             const act = row.insertCell(4);
             act.className = 'action-buttons';
-            const eBtn = document.createElement('button'); eBtn.innerText = '✏️'; eBtn.className = 'btn-edit'; eBtn.onclick = () => openEdit(rec.id);
-            const dBtn = document.createElement('button'); dBtn.innerText = '🗑️'; dBtn.className = 'btn-delete'; dBtn.onclick = () => deleteRec(rec.id);
+            const eBtn = document.createElement('button'); eBtn.innerText = '✏️'; eBtn.className = 'btn-edit'; eBtn.onclick = () => openEditModal(rec.id);
+            const dBtn = document.createElement('button'); dBtn.innerText = '🗑️'; dBtn.className = 'btn-delete'; dBtn.onclick = () => deleteRecord(rec.id);
             act.append(eBtn, dBtn);
         });
     }
     function updateAll() { renderReport(); renderTable(); }
 
-    // ============================================================
-    // ВЫПАДАЮЩИЕ СПИСКИ
-    // ============================================================
     function updateFilters() {
         const ySel = document.getElementById('yearListFilter');
         const oldY = ySel.value;
@@ -475,9 +452,6 @@
         });
     }
 
-    // ============================================================
-    // АВТОЗАПОЛНЕНИЕ
-    // ============================================================
     function setupAutocomplete(inpId, listId, warnId, dateId) {
         const inp = document.getElementById(inpId), list = document.getElementById(listId);
         inp.addEventListener('input', () => {
@@ -508,31 +482,28 @@
         }
     }
 
-    // ============================================================
-    // CRUD
-    // ============================================================
     function addRecord(date, emp, h) {
-        if (!date || !emp || !h) { alert('Заполните все поля'); return false; }
+        if (!date || !emp || !h) { alert('Заполните поля'); return false; }
         const normalizedDate = normalizeDate(date);
         if (isDuplicate(normalizedDate, emp, null)) { alert('❌ Сотрудник уже добавлен на эту дату'); return false; }
         h = parseFloat(h);
-        if (isNaN(h) || h <= 0) { alert('Введите корректное количество часов'); return false; }
-        const newRec = { id: generateId(), date: normalizedDate, employee: emp.trim(), hours: h, payment: calculatePaymentForNewRecord(h) };
+        if (isNaN(h) || h <= 0) { alert('Некорректные часы'); return false; }
+        const newRec = { id: generateId(), date: normalizedDate, employee: emp.trim(), hours: h, payment: calculatePayment(h) };
         records.push(newRec);
         saveData();
         updateFilters();
         updateAll();
         return true;
     }
-    function deleteRec(id) {
-        if (confirm('Удалить эту запись?')) {
+    function deleteRecord(id) {
+        if (confirm('Удалить запись?')) {
             records = records.filter(r => r.id !== id);
             saveData();
             updateFilters();
             updateAll();
         }
     }
-    function openEdit(id) {
+    function openEditModal(id) {
         editingId = id;
         const r = records.find(r => r.id === id);
         document.getElementById('editDate').value = r.date;
@@ -541,93 +512,64 @@
         document.getElementById('editModal').style.display = 'flex';
         setupAutocomplete('editEmployee','editAutocompleteList','editDuplicateWarning','editDate');
     }
-    function closeEdit() { editingId = null; document.getElementById('editModal').style.display = 'none'; }
+    function closeEditModal() { editingId = null; document.getElementById('editModal').style.display = 'none'; }
     function saveEdit() {
         const date = document.getElementById('editDate').value, employee = document.getElementById('editEmployee').value, hours = parseFloat(document.getElementById('editHours').value);
-        if (!date || !employee || isNaN(hours) || hours <= 0) { alert('Заполните все поля'); return; }
+        if (!date || !employee || isNaN(hours) || hours <= 0) { alert('Заполните поля'); return; }
         const normalizedDate = normalizeDate(date);
-        if (isDuplicate(normalizedDate, employee, editingId)) { alert('❌ Сотрудник уже добавлен на эту дату'); return; }
+        if (isDuplicate(normalizedDate, employee, editingId)) { alert('❌ Дубликат'); return; }
         const idx = records.findIndex(r => r.id === editingId);
         if (idx !== -1) {
-            records[idx] = { ...records[idx], date: normalizedDate, employee: employee.trim(), hours, payment: calculatePaymentForEdit(hours) };
+            records[idx] = { ...records[idx], date: normalizedDate, employee: employee.trim(), hours, payment: calculatePayment(hours) };
             saveData();
             updateFilters();
             updateAll();
         }
-        closeEdit();
+        closeEditModal();
     }
 
     // ============================================================
-    // СИНХРОНИЗАЦИЯ С GOOGLE SHEETS
+    // СИНХРОНИЗАЦИЯ
     // ============================================================
-    
     async function syncWithCloud() {
         if (syncInProgress) return;
         syncInProgress = true;
-        
-        const syncBtn = document.getElementById('syncBtn');
+        const btn = document.getElementById('syncBtn');
         const statusDiv = document.getElementById('syncStatus');
-        
-        syncBtn.classList.add('syncing');
+        btn.classList.add('syncing');
         statusDiv.className = 'sync-status syncing';
         statusDiv.innerText = '🔄 Синхронизация...';
         
         try {
-            // 1. ЗАГРУЗКА ДАННЫХ ИЗ ТАБЛИЦЫ
-            const resp = await fetch(`${API_URL}?action=get`);
-            const result = await resp.json();
-            
-            if (result.success && result.records) {
-                // Объединяем данные (облачные + локальные)
-                const cloudMap = new Map();
-                result.records.forEach(r => cloudMap.set(r.id, r));
-                
-                // Добавляем локальные записи
-                const mergedMap = new Map();
-                records.forEach(r => mergedMap.set(r.id, r));
-                cloudMap.forEach((r, id) => {
-                    if (!mergedMap.has(id)) mergedMap.set(id, r);
+            const response = await fetch(API_URL);
+            const cloudRecords = await response.json();
+            if (Array.isArray(cloudRecords)) {
+                const map = new Map();
+                cloudRecords.forEach(r => {
+                    const normalizedDate = normalizeDate(r.date);
+                    map.set(r.id, { ...r, date: normalizedDate, payment: calculatePayment(r.hours) });
                 });
-                
-                const newRecords = Array.from(mergedMap.values());
-                let added = 0;
-                
-                // Отправляем в облако те записи, которых там нет
-                for (const rec of newRecords) {
-                    if (!cloudMap.has(rec.id)) {
-                        const addUrl = `${API_URL}?action=add&id=${rec.id}&date=${encodeURIComponent(rec.date)}&employee=${encodeURIComponent(rec.employee)}&hours=${rec.hours}`;
-                        await fetch(addUrl);
-                        added++;
-                    }
-                }
-                
-                records = newRecords.map(r => ({
-                    ...r,
-                    payment: calculatePaymentForNewRecord(r.hours)
-                }));
+                records.forEach(r => map.set(r.id, { ...r, payment: calculatePayment(r.hours) }));
+                records = Array.from(map.values());
                 saveData();
-                updateFilters();
-                updateAll();
-                
-                statusDiv.className = 'sync-status success';
-                statusDiv.innerText = `✅ Синхронизация завершена. Добавлено ${added} новых записей.`;
-            } else {
-                statusDiv.className = 'sync-status error';
-                statusDiv.innerText = '❌ Ошибка получения данных из таблицы';
             }
-        } catch (err) {
-            console.error(err);
+            for (const record of records) {
+                await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: record.id, date: record.date, employee: record.employee, hours: record.hours }) });
+            }
+            statusDiv.className = 'sync-status success';
+            statusDiv.innerText = `✅ Синхронизировано ${new Date().toLocaleTimeString()}`;
+            updateFilters();
+            updateAll();
+        } catch (error) {
+            console.error(error);
             statusDiv.className = 'sync-status error';
-            statusDiv.innerText = '❌ Ошибка синхронизации. Проверьте интернет или URL скрипта.';
+            statusDiv.innerText = '❌ Ошибка синхронизации';
         } finally {
             syncInProgress = false;
-            syncBtn.classList.remove('syncing');
+            btn.classList.remove('syncing');
         }
     }
 
-    // ============================================================
-    // УПРАВЛЕНИЕ ФИЛЬТРАМИ
-    // ============================================================
     function applyReportFilters() {
         currentFilter.startDate = document.getElementById('startDate').value;
         currentFilter.endDate = document.getElementById('endDate').value;
@@ -671,7 +613,6 @@
         document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
         document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
         document.getElementById('cancelSettingsBtn').addEventListener('click', closeSettingsModal);
-        
         document.getElementById('addBtn').addEventListener('click', () => {
             const d = document.getElementById('newDate').value, e = document.getElementById('newEmployee').value, h = document.getElementById('newHours').value;
             if (addRecord(d, e, h)) {
@@ -683,9 +624,9 @@
             }
         });
         document.getElementById('saveEditBtn').addEventListener('click', saveEdit);
-        document.getElementById('cancelEditBtn').addEventListener('click', closeEdit);
+        document.getElementById('cancelEditBtn').addEventListener('click', closeEditModal);
         document.getElementById('expandHeader').addEventListener('click', toggleExpand);
-        document.getElementById('editModal').addEventListener('click', (e) => { if (e.target === document.getElementById('editModal')) closeEdit(); });
+        document.getElementById('editModal').addEventListener('click', (e) => { if (e.target === document.getElementById('editModal')) closeEditModal(); });
         
         applyReportFilters();
         applyListFilters();
