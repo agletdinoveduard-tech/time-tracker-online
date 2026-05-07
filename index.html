@@ -206,11 +206,15 @@
     </div>
 </div>
 
+<!-- Модальное окно редактирования записи -->
 <div id="editModal" class="modal" style="display: none;">
     <div class="modal-content">
         <h3>✏️ Редактировать запись</h3>
         <label>📅 Дата</label><input type="date" id="editDate">
-        <label>👤 Сотрудник</label><div class="autocomplete-container"><input type="text" id="editEmployee"><div id="editAutocompleteList" class="autocomplete-suggestions"></div></div>
+        <label>👤 Сотрудник</label>
+        <select id="editEmployeeSelect">
+            <option value="">-- Выберите сотрудника --</option>
+        </select>
         <label>⏱ Часы</label><input type="number" id="editHours" step="1">
         <div id="editDuplicateWarning" class="warning">⚠️ Дубликат</div>
         <div class="modal-buttons"><button id="saveEditBtn">💾 Сохранить</button><button id="cancelEditBtn">❌ Отмена</button></div>
@@ -576,6 +580,22 @@
             }
         }
         
+        // Обновляем выпадающий список в окне редактирования
+        const editEmployeeSelect = document.getElementById('editEmployeeSelect');
+        if (editEmployeeSelect) {
+            const oldValue = editEmployeeSelect.value;
+            editEmployeeSelect.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
+            employees.forEach(emp => {
+                const option = document.createElement('option');
+                option.value = emp.fullName;
+                option.textContent = `${emp.lastName} ${emp.firstName} ${emp.middleName || ''}`;
+                editEmployeeSelect.appendChild(option);
+            });
+            if (oldValue && employees.some(e => e.fullName === oldValue)) {
+                editEmployeeSelect.value = oldValue;
+            }
+        }
+        
         const ySel = document.getElementById('yearListFilter');
         if (ySel) {
             const oldY = ySel.value;
@@ -605,13 +625,18 @@
         editingId=id;
         const r=records.find(r=>r.id===id);
         document.getElementById('editDate').value=r.date;
-        document.getElementById('editEmployee').value=r.employee;
+        const editSelect = document.getElementById('editEmployeeSelect');
+        if (editSelect) {
+            editSelect.value = r.employee;
+        }
         document.getElementById('editHours').value=r.hours;
         document.getElementById('editModal').style.display='flex';
     }
     function closeEdit(){ editingId=null; document.getElementById('editModal').style.display='none'; }
     function saveEdit(){
-        const date=document.getElementById('editDate').value, employee=document.getElementById('editEmployee').value, hours=parseFloat(document.getElementById('editHours').value);
+        const date=document.getElementById('editDate').value;
+        const employee=document.getElementById('editEmployeeSelect').value;
+        const hours=parseFloat(document.getElementById('editHours').value);
         if(!date||!employee||isNaN(hours)||hours<=0){ alert('Заполните поля'); return; }
         const nd=normalizeDate(date);
         if(isDuplicate(nd,employee,editingId)){ alert('❌ Дубликат'); return; }
@@ -621,37 +646,6 @@
             saveData(); updateAllFilters(); updateAll();
         }
         closeEdit();
-    }
-
-    // Автозаполнение для редактирования
-    function setupAutocomplete(inpId, listId, warnId, dateId){
-        const inp = document.getElementById(inpId), list = document.getElementById(listId);
-        inp.addEventListener('input',()=>{
-            const val = inp.value.toLowerCase();
-            const filtered = getUniqueEmployeesFromRecords().filter(e => e.toLowerCase().includes(val));
-            list.innerHTML = filtered.map(n=>`<div>${n}</div>`).join('');
-            list.style.display = filtered.length && val ? 'block' : 'none';
-            Array.from(list.children).forEach(div=>div.addEventListener('click',()=>{
-                inp.value = div.innerText;
-                list.style.display = 'none';
-                if(warnId && dateId){
-                    const d = document.getElementById(dateId).value;
-                    const w = document.getElementById(warnId);
-                    if(d && div.innerText && isDuplicate(d,div.innerText,null)) w.style.display='block';
-                    else if(w) w.style.display='none';
-                }
-            }));
-        });
-        inp.addEventListener('blur',()=>setTimeout(()=>list.style.display='none',200));
-        if(dateId && warnId){
-            document.getElementById(dateId).addEventListener('change',()=>{
-                const d = document.getElementById(dateId).value;
-                const e = inp.value;
-                const w = document.getElementById(warnId);
-                if(d && e && isDuplicate(d,e,null)) w.style.display='block';
-                else if(w) w.style.display='none';
-            });
-        }
     }
 
     // Экспорт/импорт
@@ -750,7 +744,6 @@
         loadData();
         updateAllFilters();
         updateAll();
-        setupAutocomplete('editEmployee','editAutocompleteList','editDuplicateWarning','editDate');
         
         document.getElementById('yearListFilter').addEventListener('change', () => { document.getElementById('exactDateFilter').value = ''; });
         document.getElementById('monthListFilter').addEventListener('change', () => { document.getElementById('exactDateFilter').value = ''; });
