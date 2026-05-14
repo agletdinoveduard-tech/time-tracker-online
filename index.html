@@ -78,7 +78,6 @@
         .modal-content { background: white; border-radius: 24px; padding: 20px; width: 90%; max-width: 400px; max-height: 90%; overflow-y: auto; }
         .modal-buttons { display: flex; gap: 8px; margin-top: 16px; }
         .employee-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; }
-        .employee-item:hover { background: #f8f8f8; }
         .employee-name { font-weight: 600; }
         .employee-phone { font-size: 12px; color: #666; }
         .import-file { display: none; }
@@ -162,7 +161,6 @@
     </div>
 </div>
 
-<!-- Модальное окно настроек тарифов -->
 <div id="settingsModal" class="modal" style="display: none;">
     <div class="modal-content">
         <h3>⚙️ Настройка тарифов</h3>
@@ -173,7 +171,6 @@
     </div>
 </div>
 
-<!-- Модальное окно списка сотрудников -->
 <div id="employeesModal" class="modal" style="display: none;">
     <div class="modal-content">
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -185,7 +182,6 @@
     </div>
 </div>
 
-<!-- Модальное окно карточки сотрудника -->
 <div id="employeeCardModal" class="modal" style="display: none;">
     <div class="modal-content">
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -210,7 +206,6 @@
     </div>
 </div>
 
-<!-- Модальное окно добавления/редактирования сотрудника -->
 <div id="employeeFormModal" class="modal" style="display: none;">
     <div class="modal-content">
         <h3 id="employeeFormTitle">➕ Добавить сотрудника</h3>
@@ -225,7 +220,6 @@
     </div>
 </div>
 
-<!-- Модальное окно редактирования записи -->
 <div id="editModal" class="modal" style="display: none;">
     <div class="modal-content">
         <h3>✏️ Редактировать запись</h3>
@@ -242,6 +236,13 @@
 
 <script>
     // ============================================================
+    // НАСТРОЙКИ ОПТИМИЗАЦИИ
+    // ============================================================
+    let saveTimeout;
+    let lastFilterHash = '';
+    let cachedFilteredList = [];
+    
+    // ============================================================
     // ДАННЫЕ
     // ============================================================
     let records = [];
@@ -256,7 +257,7 @@
     let listFilter = { year: '', month: '', exactDate: '', employee: '', sortOrder: 'desc' };
 
     // ============================================================
-    // РАБОТА С ДАТАМИ
+    // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
     // ============================================================
     function normalizeDate(v) {
         if (!v) return '';
@@ -267,6 +268,7 @@
         return v;
     }
     function formatDate(d) { if(!d) return ''; const p = d.split('-'); return `${p[2]}.${p[1]}.${p[0]}`; }
+    function formatCurrency(value) { return value.toLocaleString('ru-RU', {minimumFractionDigits:2}) + ' ₽'; }
 
     // ============================================================
     // ТАРИФЫ
@@ -279,36 +281,19 @@
     // ============================================================
     // СОТРУДНИКИ
     // ============================================================
+    let employeesLoaded = false;
+    
     function loadEmployees() {
-        const s = localStorage.getItem('employees');
-        if (s) {
-            employees = JSON.parse(s);
-        } else {
-            employees = [];
+        if (!employeesLoaded) {
+            const s = localStorage.getItem('employees');
+            employees = s ? JSON.parse(s) : [];
+            employeesLoaded = true;
         }
-        saveEmployees();
     }
     function saveEmployees() { localStorage.setItem('employees', JSON.stringify(employees)); }
     
-    function getEmployeeShortName(employee) {
-        const parts = employee.split(' ');
-        if (parts.length >= 2) {
-            const lastName = parts[0];
-            const firstName = parts[1].charAt(0);
-            const middleName = parts[2] ? parts[2].charAt(0) : '';
-            return `${lastName} ${firstName}.${middleName ? middleName + '.' : ''}`;
-        }
-        return employee;
-    }
-    
-    function getEmployeeFullName(lastName, firstName, middleName) {
-        let full = lastName;
-        if (firstName) full += ' ' + firstName;
-        if (middleName) full += ' ' + middleName;
-        return full;
-    }
-    
     function getEmployeeDisplayName(employee) {
+        loadEmployees();
         const found = employees.find(e => e.fullName === employee);
         if (found) {
             return `${found.lastName} ${found.firstName.charAt(0)}.${found.middleName ? found.middleName.charAt(0) + '.' : ''}`;
@@ -317,29 +302,25 @@
     }
     
     function renderEmployeesList() {
+        loadEmployees();
         const container = document.getElementById('employeesList');
         if (!container) return;
         container.innerHTML = '';
         employees.forEach(emp => {
             const div = document.createElement('div');
             div.className = 'employee-item';
-            div.innerHTML = `
-                <div class="employee-name">${emp.lastName} ${emp.firstName} ${emp.middleName || ''}</div>
-                <div class="employee-phone">${emp.phone || 'Нет телефона'}</div>
-            `;
+            div.innerHTML = `<div class="employee-name">${emp.lastName} ${emp.firstName} ${emp.middleName || ''}</div><div class="employee-phone">${emp.phone || 'Нет телефона'}</div>`;
             div.onclick = () => openEmployeeCard(emp.id);
             container.appendChild(div);
         });
-        if (employees.length === 0) {
-            container.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет сотрудников</div>';
-        }
+        if (employees.length === 0) container.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">Нет сотрудников</div>';
     }
     
     function openEmployeeCard(id) {
+        loadEmployees();
         currentCardEmployeeId = id;
         const emp = employees.find(e => e.id === id);
         if (!emp) return;
-        
         document.getElementById('employeeCardTitle').innerHTML = `${emp.lastName} ${emp.firstName.charAt(0)}.${emp.middleName ? emp.middleName.charAt(0) + '.' : ''}`;
         document.getElementById('employeeCardInfo').innerHTML = `
             <div><strong>Фамилия:</strong> ${emp.lastName}</div>
@@ -356,45 +337,24 @@
     }
     
     function calculateForEmployeeCard() {
+        loadEmployees();
         const emp = employees.find(e => e.id === currentCardEmployeeId);
         if (!emp) return;
-        
         const startDate = document.getElementById('cardStartDate').value;
         const endDate = document.getElementById('cardEndDate').value;
-        
         let filtered = records.filter(r => r.employee === emp.fullName);
-        
-        if (startDate) {
-            filtered = filtered.filter(r => r.date >= startDate);
-        }
-        if (endDate) {
-            filtered = filtered.filter(r => r.date <= endDate);
-        }
-        
+        if (startDate) filtered = filtered.filter(r => r.date >= startDate);
+        if (endDate) filtered = filtered.filter(r => r.date <= endDate);
         let totalHours = 0, totalPayment = 0;
-        filtered.forEach(r => {
-            totalHours += r.hours;
-            totalPayment += r.payment;
-        });
-        
+        filtered.forEach(r => { totalHours += r.hours; totalPayment += r.payment; });
         document.getElementById('cardTotalHours').innerText = totalHours;
-        document.getElementById('cardTotalPayment').innerText = totalPayment.toLocaleString('ru-RU', {minimumFractionDigits:2}) + ' ₽';
+        document.getElementById('cardTotalPayment').innerText = formatCurrency(totalPayment);
     }
     
     function addEmployee(lastName, firstName, middleName, phone) {
-        if (!lastName || !firstName) {
-            alert('Заполните фамилию и имя');
-            return false;
-        }
-        const fullName = getEmployeeFullName(lastName, firstName, middleName);
-        const newEmp = {
-            id: Date.now(),
-            lastName: lastName.trim(),
-            firstName: firstName.trim(),
-            middleName: middleName ? middleName.trim() : '',
-            phone: phone || '',
-            fullName: fullName
-        };
+        if (!lastName || !firstName) { alert('Заполните фамилию и имя'); return false; }
+        const fullName = `${lastName} ${firstName} ${middleName || ''}`.trim();
+        const newEmp = { id: Date.now(), lastName: lastName.trim(), firstName: firstName.trim(), middleName: middleName ? middleName.trim() : '', phone: phone || '', fullName: fullName };
         employees.push(newEmp);
         saveEmployees();
         renderEmployeesList();
@@ -406,32 +366,17 @@
         const index = employees.findIndex(e => e.id === id);
         if (index !== -1) {
             const oldFullName = employees[index].fullName;
-            const newFullName = getEmployeeFullName(lastName, firstName, middleName);
-            employees[index] = {
-                id: id,
-                lastName: lastName.trim(),
-                firstName: firstName.trim(),
-                middleName: middleName ? middleName.trim() : '',
-                phone: phone || '',
-                fullName: newFullName
-            };
-            records = records.map(r => {
-                if (r.employee === oldFullName) {
-                    return { ...r, employee: newFullName };
-                }
-                return r;
-            });
+            const newFullName = `${lastName} ${firstName} ${middleName || ''}`.trim();
+            employees[index] = { id, lastName: lastName.trim(), firstName: firstName.trim(), middleName: middleName ? middleName.trim() : '', phone: phone || '', fullName: newFullName };
+            records = records.map(r => r.employee === oldFullName ? { ...r, employee: newFullName } : r);
             saveEmployees();
-            saveData();
+            saveDataDebounced();
             renderEmployeesList();
             updateAllFilters();
             updateAll();
         }
     }
     
-    // ============================================================
-    // УДАЛЕНИЕ СОТРУДНИКА (БЕЗ УДАЛЕНИЯ ЗАПИСЕЙ)
-    // ============================================================
     function deleteEmployee(id) {
         if (confirm('Удалить сотрудника из справочника? Записи о его работе останутся.')) {
             employees = employees.filter(e => e.id !== id);
@@ -466,18 +411,9 @@
         const firstName = document.getElementById('empFirstName').value;
         const middleName = document.getElementById('empMiddleName').value;
         const phone = document.getElementById('empPhone').value;
-        
-        if (!lastName || !firstName) {
-            alert('Заполните фамилию и имя');
-            return;
-        }
-        
-        if (editingEmployeeId) {
-            updateEmployee(editingEmployeeId, lastName, firstName, middleName, phone);
-        } else {
-            addEmployee(lastName, firstName, middleName, phone);
-        }
-        
+        if (!lastName || !firstName) { alert('Заполните фамилию и имя'); return; }
+        if (editingEmployeeId) updateEmployee(editingEmployeeId, lastName, firstName, middleName, phone);
+        else addEmployee(lastName, firstName, middleName, phone);
         document.getElementById('employeeFormModal').style.display = 'none';
         updateAll();
     }
@@ -485,30 +421,51 @@
     // ============================================================
     // ОСНОВНЫЕ ФУНКЦИИ
     // ============================================================
-    function saveData() { localStorage.setItem('workRecords', JSON.stringify(records)); }
+    function saveDataDebounced() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            localStorage.setItem('workRecords', JSON.stringify(records));
+        }, 500);
+    }
+    
     function loadData() { 
         const s = localStorage.getItem('workRecords'); 
         records = s ? JSON.parse(s).map(r=>({...r,date:normalizeDate(r.date)})) : []; 
-        saveData(); 
     }
     
     function getUniqueEmployeesFromRecords() {
         return [...new Set(records.map(r => r.employee))].sort();
     }
     
-    function uniqueYears() { return [...new Set(records.map(r=>r.date.split('-')[0]))].filter(y=>y).sort((a,b)=>b-a); }
-    function isDuplicate(date, emp, exclude) { return records.some(r=>r.date===date && r.employee===emp && r.id!==exclude); }
+    function uniqueYears() { 
+        const years = records.map(r => r.date.split('-')[0]);
+        return [...new Set(years)].filter(y => y).sort((a,b)=>b-a); 
+    }
+    
+    function isDuplicate(date, emp, exclude) { 
+        return records.some(r => r.date === date && r.employee === emp && r.id !== exclude); 
+    }
     const generateId = () => Date.now();
 
+    // ============================================================
+    // ФИЛЬТРАЦИЯ С КЭШИРОВАНИЕМ
+    // ============================================================
+    function getFilterHash(filter) {
+        return `${filter.year}|${filter.month}|${filter.exactDate}|${filter.employee}|${filter.sortOrder}`;
+    }
+    
     function filterForReport() {
         let f = [...records];
-        if(currentFilter.startDate) f = f.filter(r=>r.date>=currentFilter.startDate);
-        if(currentFilter.endDate) f = f.filter(r=>r.date<=currentFilter.endDate);
-        if(currentFilter.employee) f = f.filter(r=>r.employee===currentFilter.employee);
+        if(currentFilter.startDate) f = f.filter(r => r.date >= currentFilter.startDate);
+        if(currentFilter.endDate) f = f.filter(r => r.date <= currentFilter.endDate);
+        if(currentFilter.employee) f = f.filter(r => r.employee === currentFilter.employee);
         return f;
     }
     
     function filterForList() {
+        const currentHash = getFilterHash(listFilter);
+        if (currentHash === lastFilterHash) return cachedFilteredList;
+        
         let f = [...records];
         if (listFilter.exactDate) {
             f = f.filter(r => r.date === listFilter.exactDate);
@@ -521,48 +478,91 @@
         }
         if (listFilter.employee) f = f.filter(r => r.employee === listFilter.employee);
         f.sort((a, b) => listFilter.sortOrder === 'desc' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date));
+        
+        lastFilterHash = currentHash;
+        cachedFilteredList = f;
         return f;
     }
 
+    // ============================================================
+    // ОТОБРАЖЕНИЕ (С DocumentFragment)
+    // ============================================================
     function renderReport() {
         const f = filterForReport();
-        let h=0,p=0; f.forEach(r=>{ h+=r.hours; p+=r.payment; });
+        let h=0,p=0;
+        for (let i = 0; i < f.length; i++) {
+            h += f[i].hours;
+            p += f[i].payment;
+        }
         document.getElementById('totalHours').innerText = h;
-        document.getElementById('totalPayment').innerText = p.toLocaleString('ru-RU',{minimumFractionDigits:2})+' ₽';
+        document.getElementById('totalPayment').innerText = formatCurrency(p);
         document.getElementById('recordsCount').innerText = f.length;
     }
     
     function renderTable() {
         const f = filterForList();
         const tbody = document.getElementById('tableBody');
-        tbody.innerHTML = '';
-        f.forEach(rec=>{
-            const row = tbody.insertRow();
-            row.insertCell(0).innerHTML = `<span style="white-space: nowrap;">${formatDate(rec.date)}</span>`;
+        const fragment = document.createDocumentFragment();
+        
+        for (let i = 0; i < f.length; i++) {
+            const rec = f[i];
+            const row = document.createElement('tr');
+            
+            const cell0 = document.createElement('td');
+            cell0.innerHTML = `<span style="white-space: nowrap;">${formatDate(rec.date)}</span>`;
+            row.appendChild(cell0);
+            
+            const cell1 = document.createElement('td');
             const displayName = getEmployeeDisplayName(rec.employee);
-            row.insertCell(1).innerHTML = `<span class="clickable-name" data-name="${rec.employee}">${displayName}</span>`;
-            row.insertCell(2).innerText = rec.hours;
-            row.insertCell(3).innerText = rec.payment.toLocaleString('ru-RU',{minimumFractionDigits:2})+' ₽';
-            const act = row.insertCell(4);
-            act.className = 'action-buttons';
-            const eBtn = document.createElement('button'); eBtn.innerText='✏️'; eBtn.className='btn-edit'; eBtn.onclick=()=>openEdit(rec.id);
-            const dBtn = document.createElement('button'); dBtn.innerText='🗑️'; dBtn.className='btn-delete'; dBtn.onclick=()=>deleteRec(rec.id);
-            act.append(eBtn,dBtn);
-        });
+            cell1.innerHTML = `<span class="clickable-name" data-name="${rec.employee}">${displayName}</span>`;
+            row.appendChild(cell1);
+            
+            const cell2 = document.createElement('td');
+            cell2.innerText = rec.hours;
+            row.appendChild(cell2);
+            
+            const cell3 = document.createElement('td');
+            cell3.innerText = formatCurrency(rec.payment);
+            row.appendChild(cell3);
+            
+            const cell4 = document.createElement('td');
+            cell4.className = 'action-buttons';
+            
+            const eBtn = document.createElement('button');
+            eBtn.innerText = '✏️';
+            eBtn.className = 'btn-edit';
+            eBtn.onclick = (function(id) { return function() { openEdit(id); }; })(rec.id);
+            
+            const dBtn = document.createElement('button');
+            dBtn.innerText = '🗑️';
+            dBtn.className = 'btn-delete';
+            dBtn.onclick = (function(id) { return function() { deleteRec(id); }; })(rec.id);
+            
+            cell4.appendChild(eBtn);
+            cell4.appendChild(dBtn);
+            row.appendChild(cell4);
+            
+            fragment.appendChild(row);
+        }
+        
+        tbody.innerHTML = '';
+        tbody.appendChild(fragment);
         
         document.querySelectorAll('.clickable-name').forEach(el => {
             el.addEventListener('click', (e) => {
                 const fullName = el.getAttribute('data-name');
+                loadEmployees();
                 const emp = employees.find(e => e.fullName === fullName);
-                if (emp) {
-                    openEmployeeCard(emp.id);
-                } else {
-                    alert('Карточка сотрудника не найдена');
-                }
+                if (emp) openEmployeeCard(emp.id);
             });
         });
     }
     
+    function updateAll() { renderReport(); renderTable(); }
+
+    // ============================================================
+    // ФИЛЬТРЫ UI
+    // ============================================================
     function updateAllFilters() {
         const empList = getUniqueEmployeesFromRecords();
         ['employeeFilter', 'employeeListFilter'].forEach(id => {
@@ -570,84 +570,110 @@
             if (sel) {
                 const old = sel.value;
                 sel.innerHTML = '<option value="">Все сотрудники</option>';
-                empList.forEach(e => {
+                for (let i = 0; i < empList.length; i++) {
+                    const e = empList[i];
                     const displayName = getEmployeeDisplayName(e);
                     const option = document.createElement('option');
                     option.value = e;
                     option.textContent = displayName;
                     sel.appendChild(option);
-                });
+                }
                 if (old && empList.includes(old)) sel.value = old;
             }
         });
         
         const newEmployeeSelect = document.getElementById('newEmployeeSelect');
         if (newEmployeeSelect) {
+            loadEmployees();
             const oldValue = newEmployeeSelect.value;
             newEmployeeSelect.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
-            employees.forEach(emp => {
+            for (let i = 0; i < employees.length; i++) {
+                const emp = employees[i];
                 const option = document.createElement('option');
                 option.value = emp.fullName;
                 option.textContent = `${emp.lastName} ${emp.firstName} ${emp.middleName || ''}`;
                 newEmployeeSelect.appendChild(option);
-            });
-            if (oldValue && employees.some(e => e.fullName === oldValue)) {
-                newEmployeeSelect.value = oldValue;
             }
+            if (oldValue && employees.some(e => e.fullName === oldValue)) newEmployeeSelect.value = oldValue;
         }
         
         const editEmployeeSelect = document.getElementById('editEmployeeSelect');
         if (editEmployeeSelect) {
+            loadEmployees();
             const oldValue = editEmployeeSelect.value;
             editEmployeeSelect.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
-            employees.forEach(emp => {
+            for (let i = 0; i < employees.length; i++) {
+                const emp = employees[i];
                 const option = document.createElement('option');
                 option.value = emp.fullName;
                 option.textContent = `${emp.lastName} ${emp.firstName} ${emp.middleName || ''}`;
                 editEmployeeSelect.appendChild(option);
-            });
-            if (oldValue && employees.some(e => e.fullName === oldValue)) {
-                editEmployeeSelect.value = oldValue;
             }
+            if (oldValue && employees.some(e => e.fullName === oldValue)) editEmployeeSelect.value = oldValue;
         }
         
         const ySel = document.getElementById('yearListFilter');
         if (ySel) {
             const oldY = ySel.value;
+            const years = uniqueYears();
             ySel.innerHTML = '<option value="">Все годы</option>';
-            uniqueYears().forEach(y=>{const o=document.createElement('option'); o.value=y; o.textContent=y; ySel.appendChild(o);});
-            if(oldY && uniqueYears().includes(oldY)) ySel.value=oldY;
+            for (let i = 0; i < years.length; i++) {
+                const y = years[i];
+                const option = document.createElement('option');
+                option.value = y;
+                option.textContent = y;
+                ySel.appendChild(option);
+            }
+            if (oldY && years.includes(oldY)) ySel.value = oldY;
         }
     }
-    function updateAll() { renderReport(); renderTable(); }
 
-    // CRUD записей
+    // ============================================================
+    // CRUD ЗАПИСЕЙ (С ПРИНУДИТЕЛЬНЫМ ОБНОВЛЕНИЕМ)
+    // ============================================================
     function addRecord(date, emp, h){
         if(!date||!emp||!h){ alert('Заполните поля'); return false; }
         const nd = normalizeDate(date);
-        const fullEmpName = emp;
-        if(isDuplicate(nd, fullEmpName, null)){ alert('❌ Сотрудник уже добавлен на эту дату'); return false; }
+        if(isDuplicate(nd, emp, null)){ alert('❌ Сотрудник уже добавлен на эту дату'); return false; }
         h=parseFloat(h);
         if(isNaN(h)||h<=0){ alert('Некорректные часы'); return false; }
-        records.push({id:generateId(), date:nd, employee:fullEmpName, hours:h, payment:calcPayment(h)});
-        saveData(); updateAllFilters(); updateAll();
+        const newRecord = { id: generateId(), date: nd, employee: emp.trim(), hours: h, payment: calcPayment(h) };
+        records.push(newRecord);
+        saveDataDebounced();
+        // Сбрасываем кэш фильтров
+        lastFilterHash = '';
+        cachedFilteredList = [];
+        updateAllFilters();
+        updateAll();
+        renderReport();
         return true;
     }
+    
     function deleteRec(id){
-        if(confirm('Удалить?')){ records=records.filter(r=>r.id!==id); saveData(); updateAllFilters(); updateAll(); }
+        if(confirm('Удалить?')){ 
+            records = records.filter(r => r.id !== id); 
+            saveDataDebounced();
+            // Сбрасываем кэш фильтров
+            lastFilterHash = '';
+            cachedFilteredList = [];
+            updateAllFilters();
+            updateAll();
+            renderReport();
+        }
     }
+    
     function openEdit(id){
         editingId=id;
         const r=records.find(r=>r.id===id);
         document.getElementById('editDate').value=r.date;
         const editSelect = document.getElementById('editEmployeeSelect');
-        if (editSelect) {
-            editSelect.value = r.employee;
-        }
+        if (editSelect) editSelect.value = r.employee;
         document.getElementById('editHours').value=r.hours;
         document.getElementById('editModal').style.display='flex';
     }
+    
     function closeEdit(){ editingId=null; document.getElementById('editModal').style.display='none'; }
+    
     function saveEdit(){
         const date=document.getElementById('editDate').value;
         const employee=document.getElementById('editEmployeeSelect').value;
@@ -658,14 +684,23 @@
         const idx=records.findIndex(r=>r.id===editingId);
         if(idx!==-1){
             records[idx]={...records[idx], date:nd, employee:employee.trim(), hours, payment:calcPayment(hours)};
-            saveData(); updateAllFilters(); updateAll();
+            saveDataDebounced();
+            // Сбрасываем кэш фильтров
+            lastFilterHash = '';
+            cachedFilteredList = [];
+            updateAllFilters();
+            updateAll();
+            renderReport();
         }
         closeEdit();
     }
 
-    // Экспорт/импорт
+    // ============================================================
+    // ЭКСПОРТ/ИМПОРТ
+    // ============================================================
     function exportData(){
-        const exportData = { records, employees, rates };
+        if(!records.length){ alert('Нет данных'); return; }
+        const exportData = { records, employees: employeesLoaded ? employees : [], rates };
         const a=document.createElement('a');
         a.href=URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'}));
         a.download=`backup_${new Date().toISOString().slice(0,19)}.json`;
@@ -673,7 +708,9 @@
         URL.revokeObjectURL(a.href);
         alert('✅ Экспортировано');
     }
+    
     function importData(){ document.getElementById('importFile').click(); }
+    
     function handleImport(e){
         const file=e.target.files[0];
         if(!file) return;
@@ -682,18 +719,24 @@
             try{
                 const imp=JSON.parse(ev.target.result);
                 if(imp.records) records=imp.records.map(r=>({...r,date:normalizeDate(r.date),payment:calcPayment(r.hours)}));
-                if(imp.employees) employees=imp.employees;
+                if(imp.employees) { employees=imp.employees; employeesLoaded=true; saveEmployees(); }
                 if(imp.rates) { rates=imp.rates; saveRates(); }
-                saveData(); saveEmployees();
-                updateAllFilters(); updateAll();
-                alert(`✅ Импортировано ${records.length} записей, ${employees.length} сотрудников`);
+                saveDataDebounced();
+                // Сбрасываем кэш фильтров
+                lastFilterHash = '';
+                cachedFilteredList = [];
+                updateAllFilters();
+                updateAll();
+                alert(`✅ Импортировано ${records.length} записей`);
             }catch(err){ alert('❌ Ошибка импорта'); }
         };
         reader.readAsText(file);
         e.target.value='';
     }
 
-    // Настройки
+    // ============================================================
+    // НАСТРОЙКИ
+    // ============================================================
     function openSettings(){ document.getElementById('rate11').value=rates.rate11; document.getElementById('rateLess').value=rates.rateLess; document.getElementById('settingsModal').style.display='flex'; }
     function closeSettings(){ document.getElementById('settingsModal').style.display='none'; }
     function saveSettings(){
@@ -705,13 +748,16 @@
         alert('✅ Тарифы сохранены (только для новых записей)');
     }
 
-    // Фильтры интерфейса
+    // ============================================================
+    // ФИЛЬТРЫ ИНТЕРФЕЙСА
+    // ============================================================
     function applyReportFilters(){
         currentFilter.startDate=document.getElementById('startDate').value;
         currentFilter.endDate=document.getElementById('endDate').value;
         currentFilter.employee=document.getElementById('employeeFilter').value;
         renderReport();
     }
+    
     function applyListFilters(){
         listFilter.year=document.getElementById('yearListFilter').value;
         listFilter.month=document.getElementById('monthListFilter').value;
@@ -720,42 +766,31 @@
         listFilter.sortOrder=document.getElementById('sortOrder').value;
         renderTable();
     }
+    
     function toggleSort(){
         listFilter.sortOrder=listFilter.sortOrder==='desc'?'asc':'desc';
         document.getElementById('sortOrder').value=listFilter.sortOrder;
         renderTable();
     }
+    
     function toggleExpand(){
         const c=document.getElementById('recordsContent'), i=document.getElementById('expandIcon');
         if(isExpanded){ c.style.display='none'; i.innerText='▼'; } else { c.style.display='block'; i.innerText='▲'; }
         isExpanded=!isExpanded;
     }
 
-    // Модальные окна сотрудников
-    function openEmployeesModal() {
-        renderEmployeesList();
-        document.getElementById('employeesModal').style.display = 'flex';
-    }
-    
-    function editEmployeeFromCard() {
-        const emp = employees.find(e => e.id === currentCardEmployeeId);
-        if (emp) {
-            document.getElementById('employeeCardModal').style.display = 'none';
-            openEmployeeForm(emp);
-        }
-    }
-    
-    function deleteEmployeeFromCard() {
-        if (confirm('Удалить сотрудника из справочника? Записи о его работе останутся.')) {
-            deleteEmployee(currentCardEmployeeId);
-            document.getElementById('employeeCardModal').style.display = 'none';
-        }
-    }
+    // ============================================================
+    // СОБЫТИЯ МОДАЛЬНЫХ ОКОН
+    // ============================================================
+    function openEmployeesModal() { loadEmployees(); renderEmployeesList(); document.getElementById('employeesModal').style.display = 'flex'; }
+    function editEmployeeFromCard() { loadEmployees(); const emp = employees.find(e => e.id === currentCardEmployeeId); if (emp) { document.getElementById('employeeCardModal').style.display = 'none'; openEmployeeForm(emp); } }
+    function deleteEmployeeFromCard() { if (confirm('Удалить сотрудника из справочника? Записи о его работе останутся.')) { deleteEmployee(currentCardEmployeeId); document.getElementById('employeeCardModal').style.display = 'none'; } }
 
-    // Инициализация
+    // ============================================================
+    // ИНИЦИАЛИЗАЦИЯ
+    // ============================================================
     function init(){
         loadRates();
-        loadEmployees();
         loadData();
         updateAllFilters();
         updateAll();
